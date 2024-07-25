@@ -8,6 +8,7 @@ aliases:
   - jvmAndAndroid: [jvm, android]
 
 dependencies:
+  - com.soywiz:korlibs-encoding:6.0.0: exported
 
 test-dependencies:
 
