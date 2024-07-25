@@ -1,0 +1,42 @@
+name: DOCS
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      forced_version:
+        description: 'FORCED_VERSION to use'
+        required: true
+        type: string
+
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+env:
+  CI: true
+  FORCED_VERSION: ${{ inputs.forced_version || github.ref }}
+  JAVA_VERSION: 17
+  JAVA_DISTRIBUTION: zulu
+
+jobs:
+  publish:
+    timeout-minutes: 300
+    runs-on: ubuntu-latest
+    steps:
+      - { name: Checkout, uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 } # https://github.com/actions/checkout/releases/tag/v4.1.7
+      - { name: Set up JDK, uses: actions/setup-java@99b8673ff64fbf99d8d325f52d9a5bdedb8483e9, with: { distribution: "${{ env.JAVA_DISTRIBUTION }}", java-version: "${{ env.JAVA_VERSION }}" } } # https://github.com/actions/setup-java/releases/tag/v4.2.1
+      - { name: Use Node.js 20.x, uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b, with: { node-version: 20.x } } # https://github.com/actions/setup-node/releases/tag/v4.0.3
+      - { name: Prepare Gradle, uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70 } # https://github.com/gradle/actions/releases/tag/v3.5.0
+      - { name: Initialize Gradle, run: ./gradlew --no-configuration-cache }
+      - { name: Build Documentation, run: ./gradlew --no-configuration-cache dokkaHtmlMultiModule }
+      - { name: Upload artifact, uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa, with: { path: 'build/dokka/htmlMultiModule' } } # https://github.com/actions/upload-pages-artifact/releases/tag/v3.0.1
+      - { name: Deploy 🚀 to GitHub Pages, id: deployment, uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e} # https://github.com/actions/deploy-pages/releases/tag/v4.0.5
