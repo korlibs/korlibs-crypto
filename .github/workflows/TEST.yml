@@ -30,7 +30,7 @@ jobs:
           #- { outputKey: testJs, os: ubuntu-latest, testTask: "wasmBrowserTest", buildTasks: "jsNodeTest jsBrowserTest" }
           - { outputKey: testJs, os: ubuntu-latest, testTask: "wasmBrowserTest", buildTasks: "jsBrowserTest jsDenoTest" }
           - { outputKey: testAndroid, os: ubuntu-latest, enableAndroid: true }
-          - { outputKey: testJvmMacos, os: macos-latest, testTask: jvmTest }
+          - { outputKey: testJvmMacos, os: macos-latest, testTask: jvmTest apiCheck }
           - { outputKey: testJvmLinux, os: ubuntu-latest, testTask: jvmTest, precompileTask: compileTestKotlinJvm, enableKotlinNative: true, enableSandbox: true, e2e: true }
           - { outputKey: testJvmWindows, os: windows-latest, testTask: jvmTest, precompileTask: compileTestKotlinJvm }
     #if: ${{ needs.changes.outputs[matrix.outputKey] == 'true' }}
