@@ -1,0 +1,36 @@
+name: CODECOV
+# https://docs.github.com/en/actions/learn-github-actions/expressions
+
+on:
+  push:
+    branches: [ main, 'release/**' ]
+  pull_request:
+    branches: [ main, 'release/**' ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: true
+
+  JAVA_VERSION: 17
+  JAVA_DISTRIBUTION: zulu
+
+jobs:
+  test:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - { uses: actions/checkout@v4 }
+      - { name: Use Node.js 20.x, uses: actions/setup-node@v4, with: { node-version: 20.x } }
+      - { name: Setup Deno, uses: denoland/setup-deno@v1, with: { deno-version: "1.44.4" } }
+      - { name: Replace gradle wrapper, run: "sed 's/-all/-bin/g' gradle/wrapper/gradle-wrapper.properties > gradle/wrapper/gradle-wrapper.properties.bak; cp gradle/wrapper/gradle-wrapper.properties.bak gradle/wrapper/gradle-wrapper.properties" }
+      - { name: Set up JDK, uses: actions/setup-java@v4, with: { distribution: "${{ env.JAVA_DISTRIBUTION }}", java-version: "${{ env.JAVA_VERSION }}" } }
+      - { name: Prepare Gradle, uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70 } # https://github.com/gradle/actions/releases/tag/v3.5.0
+      - { name: Start gradle, run: ./gradlew }
+      - { name: Code coverage, run: ./gradlew koverXmlReport }
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v4.0.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
