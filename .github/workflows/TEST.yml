@@ -27,40 +27,41 @@ env:
   CI: true
 
   JAVA_VERSION: 17
-  JAVA_DISTRIBUTION: zulu
+  JAVA_DISTRIBUTION: temurin
 
 jobs:
   test:
     strategy:
-      fail-fast: true # Once working, comment this
+      #fail-fast: true # Once working, comment this
       matrix:
         include:
-          - { outputKey: testMacosIos, os: macos-13, testTask: jvmTest macosX64Test iosX64Test, buildTasks: publishMacosArm64PublicationToMavenLocal }
+          - { outputKey: testMacosIos, os: macos-latest, testTask: jvmTest macosArm64Test iosSimulatorArm64Test, buildTasks: publishMacosX64PublicationToMavenLocal }
           - { outputKey: testJsAndroid, os: ubuntu-latest, testTask: "wasmBrowserTest", buildTasks: "jsBrowserTest jsDenoTest", enableAndroid: true }
-          - { outputKey: testLinux, os: ubuntu-latest, testTask: apiCheck jvmTest linuxX64Test, precompileTask: compileTestKotlinJvm, e2e: true }
-          - { outputKey: testWindows, os: windows-latest, testTask: jvmTest mingwX64Test jsDenoTest, precompileTask: compileTestKotlinJvm, enableCodecov: true }
+          - { outputKey: testLinux, os: ubuntu-latest, testTask: apiCheck jvmTest linuxX64Test, precompileTask: compileTestKotlinJvm, enableCodecov: true, e2e: true }
+          - { outputKey: testWindows, os: windows-latest, testTask: jvmTest mingwX64Test jsDenoTest, precompileTask: compileTestKotlinJvm }
     #if: ${{ needs.changes.outputs[matrix.outputKey] == 'true' }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     runs-on: ${{ matrix.os }}
     steps:
       - { uses: actions/checkout@v4 }
       - { name: Use Node.js 20.x, uses: actions/setup-node@v4, with: { node-version: 20.x } }
       - { name: Setup Deno, uses: denoland/setup-deno@v1, with: { deno-version: "1.44.4" } }
-      - { name: Replace gradle wrapper, run: "sed 's/-all/-bin/g' gradle/wrapper/gradle-wrapper.properties > gradle/wrapper/gradle-wrapper.properties.bak; cp gradle/wrapper/gradle-wrapper.properties.bak gradle/wrapper/gradle-wrapper.properties" }
-      - { name: Set up JDK, uses: actions/setup-java@v4, with: { distribution: "${{ env.JAVA_DISTRIBUTION }}", java-version: "${{ env.JAVA_VERSION }}" } }
-      - { name: Prepare Gradle, uses: gradle/actions/setup-gradle@d9c87d481d55275bb5441eef3fe0e46805f9ef70 } # https://github.com/gradle/actions/releases/tag/v3.5.0
+      - { name: Set up JDK, uses: actions/setup-java@v4, with: { distribution: "${{ env.JAVA_DISTRIBUTION }}", java-version: "${{ env.JAVA_VERSION }}", cache: 'gradle' } }
+      #- { name: Prepare Gradle, uses: gradle/actions/setup-gradle@af1da67850ed9a4cedd57bfd976089dd991e2582 } # https://github.com/gradle/actions/releases/tag/v4.0.0
+      - { name: "Cache Kotlin/Native .konan folder", uses: actions/cache@v4, with: { path: "~/.konan", key: "${{ runner.os }}-konan", restore-keys: "${{ runner.os }}-konan" } }
       - { name: Start gradle, run: ./gradlew }
-      - { if: "${{ matrix.precompileTask }}", name: "Building ${{ matrix.precompileTask }} classes", run: "./gradlew --no-configuration-cache --stacktrace --build-cache ${{ matrix.precompileTask }}" }
-      - { if: "${{ matrix.enableCodecov }}", name: "Upload coverage reports to Codecov", uses: "codecov/codecov-action@e28ff129e5465c2c0dcc6f003fc735cb6ae0c673", with: { token: "${{ secrets.CODECOV_TOKEN }}" } } # https://github.com/codecov/codecov-action/releases/tag/v4.5.0
-      - { if: "${{ matrix.testTask }}", name: "Run ${{ matrix.testTask }} tests", run: "./gradlew --no-configuration-cache --build-cache ${{ matrix.testTask }}" }
-      - { if: "${{ matrix.buildTasks }}", name: "Run ${{ matrix.buildTasks }}", run: "./gradlew --no-configuration-cache --build-cache ${{ matrix.buildTasks }}" }
+      - { if: "${{ matrix.precompileTask }}", name: "Building ${{ matrix.precompileTask }} classes", run: "./gradlew --stacktrace ${{ matrix.precompileTask }}" }
+      - { if: "${{ matrix.testTask }}", name: "Run ${{ matrix.testTask }} tests", run: "./gradlew ${{ matrix.testTask }}" }
+      - { if: "${{ matrix.buildTasks }}", name: "Run ${{ matrix.buildTasks }}", run: "./gradlew ${{ matrix.buildTasks }}" }
       - name: Enable KVM
         if: "${{ matrix.enableAndroid }}"
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - { name: "Run Android Tests", if: "${{ matrix.enableAndroid }}", uses: reactivecircus/android-emulator-runner@v2, with: { "api-level": 21, "script": "./gradlew --no-configuration-cache --build-cache connectedCheck lintDebug" } }
+      - { name: "Run Android Tests", if: "${{ matrix.enableAndroid }}", uses: reactivecircus/android-emulator-runner@v2, with: { "api-level": 21, "script": "./gradlew connectedCheck lintDebug" } }
       - { name: Archive Test Results, if: failure(), uses: actions/upload-artifact@v4, with: { name: "test-results-${{ matrix.outputKey }}", retention-days: 21, path: "**/build/reports", if-no-files-found: ignore } }
-      - { if: "${{ matrix.e2e }}", name: Publish to maven local, run: ./gradlew --no-configuration-cache --build-cache publishJvmLocal publishKotlinMultiplatformPublicationToMavenLocal }
-      - { name: Code coverage, run: ./gradlew --build-cache koverXmlReport }
+      - { if: "${{ matrix.e2e }}", name: Publish to maven local, run: ./gradlew publishJvmLocal publishKotlinMultiplatformPublicationToMavenLocal }
+      - { if: "${{ matrix.enableCodecov }}", name: Code coverage, run: ./gradlew koverXmlReport }
+      - { if: "${{ matrix.enableCodecov }}", name: "Upload coverage reports to Codecov", uses: "codecov/codecov-action@e28ff129e5465c2c0dcc6f003fc735cb6ae0c673", with: { token: "${{ secrets.CODECOV_TOKEN }}" } } # https://github.com/codecov/codecov-action/releases/tag/v4.5.0
+      - { name: Stop daemon, run: ./gradlew --stop }
