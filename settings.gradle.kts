@@ -16,6 +16,9 @@ pluginManagement {
     }
 }
 
+plugins {
+    id("org.gradle.toolchains.foojay-resolver-convention") version("0.8.0")
+}
 
 for (file in rootDir.listFiles()) {
     if (file.isDirectory() && File(file, "module.yaml").exists()) {
