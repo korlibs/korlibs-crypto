@@ -10,5 +10,8 @@ aliases:
 dependencies:
   - com.soywiz:korlibs-encoding:6.0.0: exported
 
+dependencies@jvm:
+  - org.bouncycastle:bcprov-jdk18on:1.80: compile-only
+
 test-dependencies:
 
