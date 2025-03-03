@@ -120,3 +120,11 @@ open class SHA3 internal constructor(digestSize: Int) : Hasher(
         }
     }
 }
+
+fun ByteArray.sha3_224() = hash(SHA3_224)
+
+fun ByteArray.sha3_256() = hash(SHA3_256)
+
+fun ByteArray.sha3_384() = hash(SHA3_384)
+
+fun ByteArray.sha3_512() = hash(SHA3_512)
