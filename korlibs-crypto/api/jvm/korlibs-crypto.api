@@ -25,6 +25,11 @@ public final class korlibs/crypto/AES$Companion {
 	public final fun encryptAesPcbc ([B[B[BLkorlibs/crypto/CipherPadding;)[B
 }
 
+public final class korlibs/crypto/BouncyCastleDigestsKt {
+	public static final fun asHasher (Lorg/bouncycastle/crypto/Digest;)Lkorlibs/crypto/HasherFactory;
+	public static final fun hash ([BLorg/bouncycastle/crypto/Digest;)Lkorlibs/crypto/Hash;
+}
+
 public abstract interface class korlibs/crypto/Cipher {
 	public abstract fun decrypt ([BII)V
 	public abstract fun encrypt ([BII)V
@@ -95,6 +100,11 @@ public final class korlibs/crypto/CipherWithModeAndPadding {
 	public final fun getIv ()[B
 	public final fun getMode ()Lkorlibs/crypto/CipherMode;
 	public final fun getPadding ()Lkorlibs/crypto/CipherPadding;
+}
+
+public final class korlibs/crypto/DigestsKt {
+	public static final fun asHasher (Ljava/security/MessageDigest;)Lkorlibs/crypto/HasherFactory;
+	public static final fun hash ([BLjava/security/MessageDigest;)Lkorlibs/crypto/Hash;
 }
 
 public final class korlibs/crypto/HMAC {
