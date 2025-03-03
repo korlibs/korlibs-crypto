@@ -250,6 +250,38 @@ public final class korlibs/crypto/SHA256Kt {
 	public static final fun sha256 ([B)Lkorlibs/crypto/Hash;
 }
 
+public class korlibs/crypto/SHA3 : korlibs/crypto/Hasher {
+	public static final field Companion Lkorlibs/crypto/SHA3$Companion;
+	public static final field KECCAKF_ROUNDS I
+	public static final field SHA3_KECCAK_SPONGE_WORDS I
+	protected fun coreDigest ([B)V
+	protected fun corePadding (J)[B
+	protected fun coreReset ()V
+	protected fun coreUpdate ([B)V
+}
+
+public final class korlibs/crypto/SHA3$Companion : korlibs/crypto/HasherFactory {
+	public final fun getKECCAKF_PI_LANE ()[I
+	public final fun getKECCAKF_ROTATION_OFFSETS ()[I
+	public final fun getKECCAKF_ROUND_CONSTANTS-Y2RjT0g ()[J
+}
+
+public final class korlibs/crypto/SHA3_224 : korlibs/crypto/HasherFactory {
+	public static final field INSTANCE Lkorlibs/crypto/SHA3_224;
+}
+
+public final class korlibs/crypto/SHA3_256 : korlibs/crypto/HasherFactory {
+	public static final field INSTANCE Lkorlibs/crypto/SHA3_256;
+}
+
+public final class korlibs/crypto/SHA3_384 : korlibs/crypto/HasherFactory {
+	public static final field INSTANCE Lkorlibs/crypto/SHA3_384;
+}
+
+public final class korlibs/crypto/SHA3_512 : korlibs/crypto/HasherFactory {
+	public static final field INSTANCE Lkorlibs/crypto/SHA3_512;
+}
+
 public final class korlibs/crypto/SHA512 : korlibs/crypto/SHA {
 	public static final field Companion Lkorlibs/crypto/SHA512$Companion;
 	public fun <init> ()V
