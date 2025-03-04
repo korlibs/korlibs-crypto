@@ -1,18 +1,32 @@
-import com.google.gson.*
+import com.google.gson.GsonBuilder
+import com.google.gson.JsonArray
+import com.google.gson.JsonElement
 import com.google.gson.JsonParser
-import groovy.json.*
-import groovy.util.*
-import org.gradle.api.internal.tasks.testing.*
-import org.gradle.api.tasks.testing.logging.*
+import groovy.json.JsonOutput
+import groovy.util.Node
+import groovy.util.NodeList
+import org.gradle.api.internal.tasks.testing.DefaultTestFailure
+import org.gradle.api.internal.tasks.testing.DefaultTestMethodDescriptor
+import org.gradle.api.internal.tasks.testing.DefaultTestOutputEvent
+import org.gradle.api.internal.tasks.testing.DefaultTestSuiteDescriptor
+import org.gradle.api.internal.tasks.testing.TestCompleteEvent
+import org.gradle.api.internal.tasks.testing.TestExecuter
+import org.gradle.api.internal.tasks.testing.TestExecutionSpec
+import org.gradle.api.internal.tasks.testing.TestResultProcessor
+import org.gradle.api.internal.tasks.testing.TestStartEvent
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
+import org.gradle.api.tasks.testing.logging.TestLogEvent
 import org.gradle.jvm.tasks.Jar
-import org.gradle.plugins.signing.signatory.internal.pgp.*
-import org.jetbrains.dokka.gradle.*
-import org.jetbrains.kotlin.gradle.dsl.*
-import org.jetbrains.kotlin.gradle.plugin.*
-import org.jetbrains.kotlin.gradle.targets.js.ir.*
-import java.net.*
-import java.util.*
-import java.util.concurrent.*
+import org.gradle.plugins.signing.signatory.internal.pgp.InMemoryPgpSignatoryProvider
+import org.jetbrains.dokka.gradle.AbstractDokkaTask
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.plugin.KotlinSourceSet
+import org.jetbrains.kotlin.gradle.plugin.KotlinTargetWithTests
+import org.jetbrains.kotlin.gradle.targets.js.ir.KotlinJsIrTarget
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.Base64
+import java.util.concurrent.CancellationException
 
 plugins {
     kotlin("multiplatform") version "2.0.10"
@@ -36,7 +50,7 @@ var REAL_VERSION = System.getenv("FORCED_VERSION")
 //val REAL_VERSION = System.getenv("FORCED_VERSION") ?: "999.0.0.999"
 
 val JVM_TARGET = JvmTarget.JVM_1_8
-val JDK_VERSION = org.gradle.api.JavaVersion.VERSION_1_8
+val JDK_VERSION = JavaVersion.VERSION_1_8
 //val JVM_TARGET = JvmTarget.JVM_11
 //val JDK_VERSION = org.gradle.api.JavaVersion.VERSION_11
 val GROUP = "com.soywiz"
@@ -424,7 +438,7 @@ subprojects {
         }
     }
 
-    tasks.withType(org.gradle.api.tasks.testing.AbstractTestTask::class) {
+    tasks.withType(AbstractTestTask::class) {
         testLogging {
             events = mutableSetOf(
                 TestLogEvent.SKIPPED,
@@ -894,9 +908,16 @@ class MicroAmper(val project: Project) {
         check(it.all { it.isLowerCase() && !it.isDigit() })
     }
 
-    data class Dep(val path: String, val exported: Boolean, val test: Boolean, val platform: String) {
+    data class Dep(val path: String, val scope: String, val test: Boolean, val platform: String) {
         val rplatform = platform.takeIf { it.isNotEmpty() } ?: "common"
-        val configuration = "$rplatform${if (test) "Test" else "Main"}${if (exported) "Api" else "Implementation"}"
+        val configuration = "$rplatform${if (test) "Test" else "Main"}${
+            when (scope) {
+                "exported" -> "Api"
+                "compile-only" -> "CompileOnly"
+                "runtime-only" -> "RuntimeOnly"
+                else -> "Implementation"
+            }
+        }"
     }
 
     fun parseFile(file: File, lines: List<String> = file.readLines()) {
@@ -929,9 +950,9 @@ class MicroAmper(val project: Project) {
                     mode.contains("dependencies") -> {
                         val platform = mode.substringAfterLast('@', "")
                         val test = mode.startsWith("test")
-                        val exported = line.contains(Regex(":\\s*exported"))
-                        val path = tline.removePrefix("-").removeSuffix(": exported").removeSuffix(":exported").trim()
-                        deps += Dep(path = path, exported = exported, test = test, platform = platform)
+                        val scope = tline.substringAfterLast(": ").trim()
+                        val path = tline.substringBeforeLast(": ").removePrefix("- ")
+                        deps += Dep(path = path, scope = scope, test = test, platform = platform)
                     }
                 }
             } else {
@@ -1009,7 +1030,7 @@ class MicroAmper(val project: Project) {
                 val isNative = platform.contains("X86") || platform.contains("X64") || platform.contains("Arm")
                 val isApple = isMacos || isIos || isTvos || isWatchos
                 val isLinux = platform.startsWith("linux")
-                val isWindows = platform.startsWith("mingw")
+                platform.startsWith("mingw")
                 val isPosix = isLinux || isApple
                 val basePlatform = getKotlinBasePlatform(platform)
                 if (isIos || isTvos) ssDependsOn(basePlatform, "appleIosTvos")
@@ -1120,7 +1141,7 @@ allprojects {
     afterEvaluate {
         afterEvaluate {
             afterEvaluate {
-                tasks.withType(org.gradle.api.tasks.testing.Test::class) {
+                tasks.withType(Test::class) {
                     //println("TEST-TASK: $this")
                     if (JDK_VERSION.majorVersion.toInt() >= 9) {
                         jvmArgs(
