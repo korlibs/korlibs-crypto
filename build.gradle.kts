@@ -1,28 +1,18 @@
-import com.google.gson.*
-import com.google.gson.JsonParser
-import groovy.json.*
-import groovy.util.*
+import com.vanniktech.maven.publish.*
 import org.gradle.api.internal.tasks.testing.*
 import org.gradle.api.tasks.testing.logging.*
-import org.gradle.jvm.tasks.Jar
-import org.gradle.plugins.signing.signatory.internal.pgp.*
-import org.jetbrains.dokka.gradle.*
 import org.jetbrains.kotlin.gradle.dsl.*
 import org.jetbrains.kotlin.gradle.plugin.*
 import org.jetbrains.kotlin.gradle.targets.js.ir.*
-import java.net.*
 import java.util.*
-import java.util.concurrent.*
 
 plugins {
-    kotlin("multiplatform") version "2.0.10"
-    id("com.android.library") version "8.2.2"
-    id("org.jetbrains.kotlinx.kover") version "0.8.3" apply false
-    id("org.jetbrains.kotlinx.binary-compatibility-validator") version "0.16.2"
-    id("org.jetbrains.dokka") version "1.9.20"
-    //id("org.ysb33r.ivypot") version "1.0.0"
-    `maven-publish`
-    signing
+    kotlin("multiplatform") version "2.3.20"
+    id("com.android.library") version "8.13.1"
+    id("org.jetbrains.kotlinx.kover") version "0.9.3" apply false
+    id("org.jetbrains.kotlinx.binary-compatibility-validator") version "0.18.1"
+    id("org.jetbrains.dokka") version "2.1.0"
+    id("com.vanniktech.maven.publish") version "0.36.0" apply false
 }
 
 var REAL_VERSION = System.getenv("FORCED_VERSION")
@@ -36,10 +26,12 @@ var REAL_VERSION = System.getenv("FORCED_VERSION")
 //val REAL_VERSION = System.getenv("FORCED_VERSION") ?: "999.0.0.999"
 
 val JVM_TARGET = JvmTarget.JVM_1_8
-val JDK_VERSION = org.gradle.api.JavaVersion.VERSION_1_8
-//val JVM_TARGET = JvmTarget.JVM_11
-//val JDK_VERSION = org.gradle.api.JavaVersion.VERSION_11
-val GROUP = "com.soywiz"
+// JDK_VERSION controls Android compileOptions source/target compat only.
+// The Kotlin/JVM toolchain is not forced to a specific version to avoid
+// toolchain auto-provisioning failures in environments without network access.
+// Bytecode output for Kotlin targets is controlled by JVM_TARGET (1.8) above.
+val JDK_VERSION = JavaVersion.VERSION_1_8
+val GROUP = "org.korge"
 
 kotlin {
     jvm()
@@ -61,22 +53,11 @@ allprojects {
     project.apply(plugin = "kotlin-multiplatform")
     project.apply(plugin = "android-library")
 
-    java.toolchain.languageVersion = JavaLanguageVersion.of(JDK_VERSION.majorVersion)
-    kotlin.jvmToolchain(JDK_VERSION.majorVersion.toInt())
-    afterEvaluate {
-        tasks.withType(Test::class) {
-            //this.javaLauncher.set()
-            this.javaLauncher.set(javaToolchains.launcherFor {
-                // 17 is latest at the current moment
-                languageVersion.set(JavaLanguageVersion.of(JDK_VERSION.majorVersion))
-            })
-        }
-    }
-
     android {
         compileOptions {
-            sourceCompatibility = JDK_VERSION
-            targetCompatibility = JDK_VERSION
+            // Keep Android bytecode at Java 8 regardless of toolchain JDK version
+            sourceCompatibility = JavaVersion.VERSION_1_8
+            targetCompatibility = JavaVersion.VERSION_1_8
         }
         //signingConfigs {
         //    debug {
@@ -87,7 +68,7 @@ allprojects {
         //    }
         //}
         compileSdk = 33
-        namespace = "com.soywiz.${project.name.replace("-", ".")}"
+        namespace = "org.korge.${project.name.replace("-", ".")}"
         defaultConfig {
             minSdk = 20
         }
@@ -110,19 +91,19 @@ allprojects {
     MicroAmper(this).configure()
 }
 
-fun Project.doOnce(uniqueName: String, block: () -> Unit) {
-    val key = "doOnce-$uniqueName"
-    if (!rootProject.extra.has(key)) {
-        rootProject.extra.set(key, true)
-        block()
-    }
-}
-
-
 open class DenoTestTask : AbstractTestTask() {
 //open class DenoTestTask : KotlinTest() {
 
     //var isDryRun by org.jetbrains.kotlin.gradle.utils.property { false }
+
+    @get:Internal
+    val projectPathName: String = project.path.trim(':').replace(':', '-')
+
+    @get:Internal
+    val rootDir: File = project.rootProject.rootDir
+
+    @get:Internal
+    val projectDir: File = project.projectDir
 
     init {
         this.group = "verification"
@@ -146,7 +127,7 @@ open class DenoTestTask : AbstractTestTask() {
     }
 
     override fun createTestExecuter(): TestExecuter<out TestExecutionSpec> {
-        return DenoTestExecuter(this.project, this.filter)
+        return DenoTestExecuter(projectPathName, rootDir, projectDir, this.filter)
     }
     //override fun createTestExecuter(): TestExecuter<out TestExecutionSpec> = TODO()
     override fun createTestExecutionSpec(): TestExecutionSpec = DenoTestExecutionSpec()
@@ -155,17 +136,11 @@ open class DenoTestTask : AbstractTestTask() {
         outputs.upToDateWhen { false }
     }
 
-    class DenoTestExecuter(val project: Project, val filter: TestFilter) : TestExecuter<DenoTestExecutionSpec> {
-        private fun Project.fullPathName(): String {
-            //KotlinTest
-            if (this.parent == null) return this.name
-            return this.parent!!.fullPathName() + ":" + this.name
-        }
-
+    class DenoTestExecuter(val projectPathName: String, val rootDir: File, val projectDir: File, val filter: TestFilter) : TestExecuter<DenoTestExecutionSpec> {
         override fun execute(testExecutionSpec: DenoTestExecutionSpec, testResultProcessor: TestResultProcessor) {
-            val baseTestFileNameBase = this.project.fullPathName().trim(':').replace(':', '-') + "-test"
+            val baseTestFileNameBase = "$projectPathName-test"
             val baseTestFileName = "$baseTestFileNameBase.mjs"
-            val runFile = File(this.project.rootProject.rootDir, "build/js/packages/$baseTestFileNameBase/kotlin/$baseTestFileName.deno.mjs")
+            val runFile = File(rootDir, "build/js/packages/$baseTestFileNameBase/kotlin/$baseTestFileName.deno.mjs")
 
             runFile.parentFile.mkdirs()
             runFile.writeText(
@@ -192,7 +167,7 @@ open class DenoTestTask : AbstractTestTask() {
                 if (filter.includePatterns.isEmpty()) {
                     add("--filter=${filter.includePatterns.joinToString(",")}")
                 }
-                add("--junit-path=${project.file("build/test-results/jsDenoTest/junit.xml").absolutePath}")
+                add("--junit-path=${File(projectDir, "build/test-results/jsDenoTest/junit.xml").absolutePath}")
                 add(runFile.absolutePath)
             }).directory(runFile.parentFile)
                 .start()
@@ -213,7 +188,6 @@ open class DenoTestTask : AbstractTestTask() {
                             else -> TestResult.ResultType.SUCCESS
                         }
                         if (type == TestResult.ResultType.FAILURE) {
-                            testResultProcessor.output(currentTestId, DefaultTestOutputEvent(TestOutputEvent.Destination.StdErr, "FAILED\n"))
                             testResultProcessor.failure(currentTestId, DefaultTestFailure.fromTestFrameworkFailure(Exception("FAILED").also { it.stackTrace = arrayOf() }, null))
                             failedCount++
                         }
@@ -238,7 +212,7 @@ open class DenoTestTask : AbstractTestTask() {
                         capturingOutput = false
                     }
                     capturingOutput -> {
-                        testResultProcessor.output(currentTestId, DefaultTestOutputEvent(TestOutputEvent.Destination.StdOut, "$line\n"))
+                        // Avoid deprecated DefaultTestOutputEvent constructor usage.
                     }
                     line.contains("...") -> {
                         //DefaultNestedTestSuiteDescriptor()
@@ -273,97 +247,60 @@ open class DenoTestTask : AbstractTestTask() {
     class DenoTestExecutionSpec : TestExecutionSpec
 }
 
-class SonatypeProps(val project: Project) {
-    // Signing
-    val signingKey: String? = System.getenv("ORG_GRADLE_PROJECT_signingKey") ?: project.findProperty("signing.signingKey")?.toString()
-    val signingPassword: String? = System.getenv("ORG_GRADLE_PROJECT_signingPassword") ?: project.findProperty("signing.password")?.toString()
-    val globalSignatories: CachedInMemoryPgpSignatoryProvider? = when {
-        signingKey != null && signingPassword != null -> CachedInMemoryPgpSignatoryProvider(signingKey, signingPassword)
-        else -> null
+private fun Project.configureCentralPortalCompatibilityProps() {
+    // Map legacy env/property names to the exact names the Vanniktech plugin expects.
+    // Vanniktech reads: signingInMemoryKey, signingInMemoryKeyPassword, mavenCentralUsername, mavenCentralPassword
+    val extras = extensions.extraProperties
+
+    fun mapIfAbsent(targetKey: String, vararg sources: () -> String?) {
+        // Skip if already set to a non-blank value via extras or project properties
+        if (extras.has(targetKey) && extras[targetKey]?.toString().isNullOrBlank().not()) return
+        if (findProperty(targetKey)?.toString().isNullOrBlank().not()) return
+        // Find the first non-blank value among the sources
+        val value = sources.firstNotNullOfOrNull { it()?.takeIf { v -> v.isNotBlank() } } ?: return
+        extras[targetKey] = value
     }
 
-    val sonatypePublishUserNull: String? =
-        (System.getenv("SONATYPE_USERNAME") ?: rootProject.findProperty("SONATYPE_USERNAME")?.toString() ?: project.findProperty("sonatypeUsername")
-            ?.toString())
-    val sonatypePublishPasswordNull: String? =
-        (System.getenv("SONATYPE_PASSWORD") ?: rootProject.findProperty("SONATYPE_PASSWORD")?.toString() ?: project.findProperty("sonatypePassword")
-            ?.toString())
-    val sonatype: Sonatype? = when {
-        sonatypePublishUserNull != null && sonatypePublishPasswordNull != null -> Sonatype(sonatypePublishUserNull, sonatypePublishPasswordNull)
-        else -> null
-    }
-
-    val stagedRepositoryId: String? by lazy {
-        System.getenv("stagedRepositoryId")
-            ?: findProperty("stagedRepositoryId")?.toString()
-            ?: File("stagedRepositoryId").takeIf { it.exists() }?.readText()?.trim()
-    }
-
-    open class StartReleasingMavenCentral : DefaultTask() {
-        @Input
-        @Optional
-        var sonatype: Sonatype? = null
-
-        @TaskAction
-        fun action() {
-            val profileId = sonatype!!.findProfileIdByGroupId("com.soywiz")
-            val stagedRepositoryId = sonatype!!.startStagedRepository(profileId)
-            println("profileId=$profileId")
-            println("stagedRepositoryId=$stagedRepositoryId")
-            GithubCI.setOutput("stagedRepositoryId", stagedRepositoryId)
-            File("stagedRepositoryId").writeText(stagedRepositoryId)
-        }
-    }
-
-    open class ReleaseMavenCentralTask : DefaultTask() {
-        @Input
-        @Optional
-        var sonatype: Sonatype? = null
-
-        @Input
-        @Optional
-        var repositoryId: String? = null
-
-        @TaskAction
-        fun action() {
-            //if (!sonatype.releaseGroupId(rootProject.group.toString())) {
-            try {
-                if (!sonatype!!.releaseRepositoryID(repositoryId)) {
-                    error("Can't promote artifacts. Check log for details")
-                }
-            } finally {
-                File("stagedRepositoryId").delete()
-            }
-
-        }
-    }
-
-    fun createTasks(project: Project) = with(project) {
-        if (sonatype != null) {
-            tasks.create("startReleasingMavenCentral", StartReleasingMavenCentral::class) {
-                this.sonatype = this@SonatypeProps.sonatype
-            }
-            rootProject.tasks.create<ReleaseMavenCentralTask>("releaseMavenCentral") {
-                this.sonatype = this@SonatypeProps.sonatype
-                this.repositoryId = this@SonatypeProps.stagedRepositoryId
-            }
-        }
-
-        if (stagedRepositoryId != null) {
-            println("stagedRepositoryId=$stagedRepositoryId")
-        }
-    }
+    mapIfAbsent("signingInMemoryKey",
+        { System.getenv("ORG_GRADLE_PROJECT_signingInMemoryKey") },
+        { System.getenv("ORG_GRADLE_PROJECT_signingKey") },
+        { findProperty("signing.signingKey")?.toString() }
+    )
+    mapIfAbsent("signingInMemoryKeyPassword",
+        { System.getenv("ORG_GRADLE_PROJECT_signingInMemoryKeyPassword") },
+        { System.getenv("ORG_GRADLE_PROJECT_signingPassword") },
+        { findProperty("signing.password")?.toString() }
+    )
+    mapIfAbsent("mavenCentralUsername",
+        { System.getenv("ORG_GRADLE_PROJECT_mavenCentralUsername") },
+        { System.getenv("SONATYPE_USERNAME") },
+        { rootProject.findProperty("SONATYPE_USERNAME")?.toString() },
+        { findProperty("sonatypeUsername")?.toString() }
+    )
+    mapIfAbsent("mavenCentralPassword",
+        { System.getenv("ORG_GRADLE_PROJECT_mavenCentralPassword") },
+        { System.getenv("SONATYPE_PASSWORD") },
+        { rootProject.findProperty("SONATYPE_PASSWORD")?.toString() },
+        { findProperty("sonatypePassword")?.toString() }
+    )
 }
 
-val sonatypeProps = SonatypeProps(rootProject)
-
-sonatypeProps.createTasks(rootProject)
+private fun Project.hasSigningCredentials(): Boolean {
+    // A credential is only considered present when it resolves to a non-blank string.
+    fun String?.isPresent() = !isNullOrBlank()
+    return System.getenv("ORG_GRADLE_PROJECT_signingInMemoryKey").isPresent() ||
+            System.getenv("ORG_GRADLE_PROJECT_signingKey").isPresent() ||
+            findProperty("signingInMemoryKey")?.toString().isPresent() ||
+            findProperty("signing.secretKeyRingFile")?.toString().isPresent() ||
+            extensions.extraProperties.runCatching { get("signingInMemoryKey")?.toString() }.getOrNull().isPresent()
+}
 
 subprojects {
     //apply<KotlinMultiplatformPlugin>()
     apply(plugin = "kotlin-multiplatform")
-    apply(plugin = "maven-publish")
-    apply(plugin = "signing")
+    apply(plugin = "com.vanniktech.maven.publish")
+
+    configureCentralPortalCompatibilityProps()
 
     kotlin {
         js {
@@ -380,7 +317,7 @@ subprojects {
         //if (targets.any { it.name.contains("android") }) {
         androidTarget {
             this.compilerOptions.jvmTarget.set(JVM_TARGET)
-            publishAllLibraryVariants()
+            publishLibraryVariants("release")
             //publishLibraryVariants("release", "debug")
         }
         //}
@@ -391,8 +328,7 @@ subprojects {
         //println(this.findByName("compileTestKotlinJs")!!.dependsOn?.toList())
         //println(this.findByName("compileTestKotlinJs")?.outputs?.files?.toList())
 
-        val jsDenoTest by creating(DenoTestTask::class) {
-        }
+        val jsDenoTest by registering(DenoTestTask::class)
     }
 
     tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompilationTask::class) {
@@ -406,7 +342,7 @@ subprojects {
     //}
 
     tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinNativeLink::class) {
-        // /Users/soywiz/projects/korge-korlibs/korlibs-io/build/bin/iosSimulatorArm64/debugTest
+        // /Users/korge/projects/korge-korlibs/korlibs-io/build/bin/iosSimulatorArm64/debugTest
         //println(this.target)
         //val target = Regex("^link(.*?)Test.*$").find(this.name)?.groupValues?.getOrNull(1)?.replaceFirstChar { it.lowercaseChar() }
         //println(target)
@@ -417,9 +353,10 @@ subprojects {
         val fromFolder = File(project.projectDir, "testresources")
 
         if (folder != null) {
-            val copyAfterLink = tasks.create("${this.name}CopyResources", Copy::class)
-            copyAfterLink.from(fromFolder)
-            copyAfterLink.into(folder)
+            val copyAfterLink = tasks.register("${this.name}CopyResources", Copy::class.java) {
+                from(fromFolder)
+                into(folder)
+            }
             this.dependsOn(copyAfterLink)
         }
     }
@@ -486,9 +423,10 @@ subprojects {
 
     for (taskName in listOf("jsTestProcessResources", "wasmTestProcessResources")) {
         tasks.findByName(taskName)?.apply {
-            this.dependsOn(tasks.create("${taskName}CopyResources", TestProcessResourcesLast::class).also {
-                it.dirs = this.outputs.files.toList().filter { it.isDirectory }
-            })
+            val copyResourcesTask = tasks.register("${taskName}CopyResources", TestProcessResourcesLast::class.java) {
+                dirs = this@apply.outputs.files.toList().filter { it.isDirectory }
+            }
+            this.dependsOn(copyResourcesTask)
         }
     }
 
@@ -507,369 +445,39 @@ subprojects {
     //println(tasks.findByName("jsProcessResources")!!::class)
 
     // Publishing
-    run {
-        publishing {
-            repositories {
-                if (sonatypeProps.sonatype != null) {
-                    maven {
-                        credentials {
-                            username = sonatypeProps.sonatype.user
-                            password = sonatypeProps.sonatype.pass
-                        }
-                        url = when {
-                            version.toString().contains("-SNAPSHOT") -> uri("https://oss.sonatype.org/content/repositories/snapshots/")
-                            sonatypeProps.stagedRepositoryId != null -> uri("https://oss.sonatype.org/service/local/staging/deployByRepositoryId/${sonatypeProps.stagedRepositoryId}/")
-                            else -> uri("https://oss.sonatype.org/service/local/staging/deploy/maven2/")
-                        }
-                        doOnce("showDeployTo") { logger.info("DEPLOY mavenRepository: $url") }
-                    }
-                }
-            }
-
-            publications.withType(MavenPublication::class) {
-                //println(this.artifacts.stream().map { it.file })
-                //copyArtifactsToDirectory.get().from(this.artifacts.stream().map { it.file })
-
-                val publication = this
-                val jarTaskName = "${publication.name}JavadocJar"
-                //println(jarTaskName)
-                val javadocJar = tasks.create<Jar>(jarTaskName) {
-                    archiveClassifier.set("javadoc")
-                    archiveBaseName.set(jarTaskName)
-                }
-                publication.artifact(javadocJar)
-
-                //println("PUBLICATION: ${publication.name}")
-
-                fun getCustomProp(key: String, defaultValue: String): String {
-                    // @TODO: Actually be able to override it
-                    return defaultValue
-                }
-
-                //if (multiplatform) {
-                //if (!isGradlePluginMarker) {
-                run {
-                    val defaultGitUrl = "https://github.com/korlibs/korge-korlibs"
-                    publication.pom.also { pom ->
-                        pom.name.set(project.name)
-                        pom.description.set(project.description ?: getCustomProp("project.description", project.description ?: project.name))
-                        pom.url.set(getCustomProp("project.scm.url", defaultGitUrl))
-                        pom.licenses {
-                            license {
-                                name.set(getCustomProp("project.license.name", "MIT"))
-                                url.set(getCustomProp("project.license.url", "https://raw.githubusercontent.com/korlibs/korge-korlibs/main/LICENSE"))
-                            }
-                        }
-                        pom.developers {
-                            developer {
-                                id.set(getCustomProp("project.author.id", "soywiz"))
-                                name.set(getCustomProp("project.author.name", "Carlos Ballesteros Velasco"))
-                                email.set(getCustomProp("project.author.email", "soywiz@gmail.com"))
-                            }
-                        }
-                        pom.scm {
-                            url.set(getCustomProp("project.scm.url", defaultGitUrl))
-                        }
-                    }
-                    publication.pom.withXml {
-                        val root = NodeList(listOf(this@withXml.asNode()))
-                        //println("baseProjectName=$baseProjectName")
-                        val packaging = root.getAt("packaging").text()
-                        //println("---------------")
-                        //println("root=$root")
-                        //println("packaging=" + (root.getAt("packaging")))
-                        //println("packaging=" + root.getAt("packaging"))
-                        //println("packaging.text=" + root.getAt("packaging").text())
-                        if (packaging == "aar") {
-                            val nodes: NodeList = root.getAt("dependencies").getAt("dependency").getAt("scope")
-                            for (node in nodes as List<Node>) {
-                                node.setValue("compile")
-                                //println("node=$node setValue=compile")
-                            }
-                        }
-                    }
-                }
-            }
+    extensions.configure<MavenPublishBaseExtension> {
+        if (project.hasSigningCredentials()) {
+            publishToMavenCentral()
+            signAllPublications()
         }
 
+        coordinates(project.group.toString(), project.name, project.version.toString())
 
-    }
-
-    // Signing
-    if (sonatypeProps.globalSignatories != null) {
-        signing {
-            sign(publishing.publications)
-            this.signatories = sonatypeProps.globalSignatories
+        pom {
+            val defaultGitUrl = "https://github.com/korlibs/korlibs"
+            name.set(project.name)
+            description.set(project.description ?: project.name)
+            url.set(defaultGitUrl)
+            licenses {
+                license {
+                    name.set("MIT")
+                    url.set("https://raw.githubusercontent.com/korlibs/korge/refs/heads/main/LICENSE")
+                }
+            }
+            developers {
+                developer {
+                    id.set("korge")
+                    name.set("Korge Team")
+                    email.set("info@korge.org")
+                }
+            }
+            scm {
+                url.set(defaultGitUrl)
+            }
         }
     }
 
     //println(KotlinCompilerVersion.VERSION)
-}
-
-open class CachedInMemoryPgpSignatoryProvider(signingKey: String?, signingPassword: String?) : InMemoryPgpSignatoryProvider(signingKey, signingPassword) {
-    var cachedPhpSignatory: PgpSignatory? = null
-    override fun getDefaultSignatory(project: Project): PgpSignatory? {
-        //project.rootProject
-        //println("getDefaultSignatory:$project")
-        if (cachedPhpSignatory == null) {
-            cachedPhpSignatory = super.getDefaultSignatory(project)
-        }
-        return cachedPhpSignatory
-    }
-}
-
-
-open class Sonatype(
-    val user: String,
-    val pass: String,
-    val BASE: String = DEFAULT_BASE
-) {
-    companion object {
-        val DEFAULT_BASE = "https://oss.sonatype.org/service/local/staging"
-        private val BASE = DEFAULT_BASE
-
-        //fun fromGlobalConfig(): Sonatype {
-        //    val props = Properties().also { it.load(File(System.getProperty("user.home") + "/.gradle/gradle.properties").readText().reader()) }
-        //    return Sonatype(props["sonatypeUsername"].toString(), props["sonatypePassword"].toString(), DEFAULT_BASE)
-        //}
-
-        //fun fromProject(project: Project): Sonatype {
-        //    return Sonatype(project.sonatypePublishUser, project.sonatypePublishPassword)
-        //}
-
-        //@JvmStatic
-        //fun main(args: Array<String>) {
-        //    val sonatype = fromGlobalConfig()
-        //    sonatype.releaseGroupId("korlibs")
-        //}
-    }
-
-    fun releaseGroupId(groupId: String = "korlibs"): Boolean {
-        println("Trying to release groupId=$groupId")
-        val profileId = findProfileIdByGroupId(groupId)
-        println("Determined profileId=$profileId")
-        val repositoryIds = findProfileRepositories(profileId)
-        if (repositoryIds.isEmpty()) {
-            println("Can't find any repositories for profileId=$profileId for groupId=$groupId. Artifacts weren't upload?")
-            return false
-        }
-        return releaseRepositoryIDs(repositoryIds)
-    }
-
-    fun releaseRepositoryID(repositoryId: String?): Boolean {
-        val repositoryIds = listOfNotNull(repositoryId)
-        if (repositoryIds.isEmpty()) return false
-        return releaseRepositoryIDs(repositoryIds)
-    }
-
-    fun releaseRepositoryIDs(repositoryIds: List<String>): Boolean {
-        val repositoryIds = repositoryIds.toMutableList()
-        val totalRepositories = repositoryIds.size
-        var promoted = 0
-        var stepCount = 0
-        var retryCount = 0
-        process@while (true) {
-            stepCount++
-            if (stepCount > 200) {
-                error("Too much steps. stepCount=$stepCount")
-            }
-            repo@for (repositoryId in repositoryIds.toList()) {
-                val state = try {
-                    getRepositoryState(repositoryId)
-                } catch (e: SimpleHttpException) {
-                    when (e.responseCode) {
-                        404 -> {
-                            println("Can't find $repositoryId anymore. Probably released. Stopping")
-                            repositoryIds.remove(repositoryId)
-                            continue@repo
-                        }
-                        else -> throw e
-                    }
-                }
-                when {
-                    state.transitioning -> {
-                        println("Waiting transition $state")
-                    }
-                    // Even if open, if there are notifications we should drop it
-                    state.notifications > 0 -> {
-                        println("Dropping release because of error state.notifications=$state")
-                        println(" - activity: " + getRepositoryActivity(repositoryId))
-                        repositoryDrop(repositoryId)
-                        repositoryIds.remove(repositoryId)
-                    }
-                    state.isOpen -> {
-                        println("Closing open repository $state")
-                        println(" - activity: " + getRepositoryActivity(repositoryId))
-                        repositoryClose(repositoryId)
-                    }
-                    else -> {
-                        println("Promoting repository $state")
-                        println(" - activity: " + getRepositoryActivity(repositoryId))
-                        repositoryPromote(repositoryId)
-                        promoted++
-                    }
-                }
-            }
-            if (repositoryIds.isEmpty()) {
-                println("Completed promoted=$promoted, totalRepositories=$totalRepositories, retryCount=$retryCount")
-                break@process
-            }
-            Thread.sleep(30_000L)
-        }
-
-        return promoted == totalRepositories
-    }
-
-    private val client get() = SimpleHttpClient(user, pass)
-
-    fun getRepositoryState(repositoryId: String): RepoState {
-        val info = client.requestWithRetry("${BASE}/repository/$repositoryId")
-        //println("info: ${info.toStringPretty()}")
-        return RepoState(
-            repositoryId = repositoryId,
-            type = info["type"].asString,
-            notifications = info["notifications"].asInt,
-            transitioning = info["transitioning"].asBoolean,
-        )
-    }
-
-    fun getRepositoryActivity(repositoryId: String): String {
-        val info = client.requestWithRetry("${BASE}/repository/$repositoryId/activity")
-        //println("info: ${info.toStringPretty()}")
-        return info.toStringPretty()
-    }
-
-    data class RepoState(
-        val repositoryId: String,
-        // "open" or "closed"
-        val type: String,
-        val notifications: Int,
-        val transitioning: Boolean
-    ) {
-        val isOpen get() = type == "open"
-    }
-
-    private fun getDataMapForRepository(repositoryId: String): Map<String, Map<*, *>> {
-        return mapOf(
-            "data" to mapOf(
-                "stagedRepositoryIds" to listOf(repositoryId),
-                "description" to "",
-                "autoDropAfterRelease" to true,
-            )
-        )
-    }
-
-    fun repositoryClose(repositoryId: String) {
-        client.requestWithRetry("${BASE}/bulk/close", getDataMapForRepository(repositoryId))
-    }
-
-    fun repositoryPromote(repositoryId: String) {
-        client.requestWithRetry("${BASE}/bulk/promote", getDataMapForRepository(repositoryId))
-    }
-
-    fun repositoryDrop(repositoryId: String) {
-        client.requestWithRetry("${BASE}/bulk/drop", getDataMapForRepository(repositoryId))
-    }
-
-    fun findProfileRepositories(profileId: String): List<String> {
-        return client.requestWithRetry("${BASE}/profile_repositories")["data"].list
-            .filter { it["profileId"].asString == profileId }
-            .map { it["repositoryId"].asString }
-    }
-
-    fun findProfileIdByGroupId(groupId: String): String {
-        val profiles = client.requestWithRetry("$BASE/profiles")["data"].list
-        return profiles
-            .filter { groupId.startsWith(it["name"].asString) }
-            .map { it["id"].asString }
-            .firstOrNull() ?: error("Can't find profile with group id '$groupId'")
-    }
-
-    fun startStagedRepository(profileId: String): String {
-        return client.requestWithRetry("${BASE}/profiles/$profileId/start", mapOf(
-            "data" to mapOf("description" to "Explicitly created by easy-kotlin-mpp-gradle-plugin")
-        ))["data"]["stagedRepositoryId"].asString
-    }
-
-    operator fun JsonElement.get(key: String): JsonElement = asJsonObject.get(key)
-    val JsonElement.list: JsonArray get() = asJsonArray
-    fun JsonElement.toStringPretty() = GsonBuilder().setPrettyPrinting().create().toJson(this)
-}
-
-open class SimpleHttpClient(
-    val user: String? = null,
-    val pass: String? = null
-) {
-    open fun requestWithRetry(url: String, body: Any? = null, nretries: Int = 15): JsonElement {
-        var retryCount = 0
-        while (true) {
-            try {
-                return request(url, body)
-            } catch (e: SimpleHttpException) {
-                when (e.responseCode) {
-                    in 500..599 -> { // Sometimes  HTTP Error 502 Bad Gateway
-                        e.printStackTrace()
-                        retryCount++
-                        if (retryCount >= nretries) throw RuntimeException("Couldn't access $url after $nretries retries :: ${e.responseCode} : ${e.message}", e)
-                        println("Retrying... retryCount=$retryCount/$nretries")
-                        Thread.sleep(15_000L + (retryCount * 5_000L))
-                        continue
-                    }
-                    else -> {
-                        throw e
-                    }
-                }
-            }
-        }
-    }
-
-    open fun request(url: String, body: Any? = null): JsonElement {
-        val post = (URL(url).openConnection()) as HttpURLConnection
-        post.connectTimeout = 300 * 1000 // 300 seconds // 5 minutes
-        post.readTimeout = 300 * 1000 // 300 seconds // 5 minutes
-        post.requestMethod = (if (body != null) "POST" else "GET")
-        if (user != null && pass != null) {
-            val authBasic = Base64.getEncoder().encodeToString("${user}:${pass}".toByteArray(Charsets.UTF_8))
-            post.setRequestProperty("Authorization", "Basic $authBasic")
-        }
-        post.setRequestProperty("Accept", "application/json")
-        if (body != null) {
-            post.doOutput = true
-            post.setRequestProperty("Content-Type", "application/json")
-            val bodyText = if (body is String) body.toString() else JsonOutput.toJson(body)
-            //println(bodyText)
-            post.outputStream.write(bodyText.toByteArray(Charsets.UTF_8))
-        }
-        val postRC = post.responseCode
-        val postMessage = post.responseMessage
-        //println(postRC)
-        if (postRC < 400) {
-            return JsonParser.parseString(post.inputStream.reader(Charsets.UTF_8).readText())
-        } else {
-            val errorString = try {
-                post.errorStream?.reader(Charsets.UTF_8)?.readText()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                null
-            }
-            throw SimpleHttpException(postRC, postMessage, url, errorString)
-        }
-    }
-}
-
-class SimpleHttpException(val responseCode: Int, val responseMessage: String, val url: String, val errorString: String?) :
-    RuntimeException("HTTP Error $responseCode $responseMessage - $url - $errorString")
-
-object GithubCI {
-    fun setOutput(name: String, value: String) {
-        val GITHUB_OUTPUT = System.getenv("GITHUB_OUTPUT")
-        if (GITHUB_OUTPUT != null) {
-            File(GITHUB_OUTPUT).appendText("$name=$value\n")
-        } else {
-            println("::set-output name=$name::$value")
-        }
-    }
 }
 
 /*
@@ -991,6 +599,7 @@ class MicroAmper(val project: Project) {
         }
     }
 
+    @OptIn(org.jetbrains.kotlin.gradle.ExperimentalWasmDsl::class)
     fun applyTo() = with(project) {
         project.kotlin.sourceSets {
             ssDependsOn("native", "common")
@@ -1009,7 +618,6 @@ class MicroAmper(val project: Project) {
                 val isNative = platform.contains("X86") || platform.contains("X64") || platform.contains("Arm")
                 val isApple = isMacos || isIos || isTvos || isWatchos
                 val isLinux = platform.startsWith("linux")
-                val isWindows = platform.startsWith("mingw")
                 val isPosix = isLinux || isApple
                 val basePlatform = getKotlinBasePlatform(platform)
                 if (isIos || isTvos) ssDependsOn(basePlatform, "appleIosTvos")
@@ -1032,6 +640,7 @@ class MicroAmper(val project: Project) {
                     browser()
                 }
                 "wasm" -> {
+                    @OptIn(org.jetbrains.kotlin.gradle.ExperimentalWasmDsl::class)
                     kotlin.wasmJs {
                     }
                     kotlin.sourceSets {
@@ -1117,35 +726,18 @@ class MicroAmper(val project: Project) {
 }
 
 allprojects {
-    afterEvaluate {
-        afterEvaluate {
-            afterEvaluate {
-                tasks.withType(org.gradle.api.tasks.testing.Test::class) {
-                    //println("TEST-TASK: $this")
-                    if (JDK_VERSION.majorVersion.toInt() >= 9) {
-                        jvmArgs(
-                            "-XX:+IgnoreUnrecognizedVMOptions",
-                            "--add-opens", "java.base/java.nio=ALL-UNNAMED",
-                            //"--add-opens", "java.base/jdk.incubator.foreign=ALL-UNNAMED",
-                            "--add-opens", "java.base/sun.nio.ch=ALL-UNNAMED",
-                        )
-                    }
-                }
-            }
-        }
+    tasks.withType(Test::class).configureEach {
+        jvmArgs(
+            "-XX:+IgnoreUnrecognizedVMOptions",
+            "--add-opens", "java.base/java.nio=ALL-UNNAMED",
+            "--add-opens", "java.base/sun.nio.ch=ALL-UNNAMED",
+        )
     }
 }
 
 subprojects {
     plugins.apply("org.jetbrains.dokka")
     plugins.apply("org.jetbrains.kotlinx.kover")
-}
-
-allprojects {
-    tasks.withType(AbstractDokkaTask::class.java).configureEach {
-        //println("DOKKA=$it")
-        offlineMode.set(true)
-    }
 }
 
 apiValidation {
