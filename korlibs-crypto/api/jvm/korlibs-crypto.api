@@ -27,7 +27,9 @@ public final class korlibs/crypto/AES$Companion {
 
 public abstract interface class korlibs/crypto/Cipher {
 	public abstract fun decrypt ([BII)V
+	public static synthetic fun decrypt$default (Lkorlibs/crypto/Cipher;[BIIILjava/lang/Object;)V
 	public abstract fun encrypt ([BII)V
+	public static synthetic fun encrypt$default (Lkorlibs/crypto/Cipher;[BIIILjava/lang/Object;)V
 	public abstract fun getBlockSize ()I
 }
 
